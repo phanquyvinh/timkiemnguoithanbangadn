@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hệ Thống Tìm Kiếm Người Thân Qua ADN - Bản Quyền Phan Quý Vinh</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333; }
+        .container { max-width: 800px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        h1 { color: #1e3d59; text-align: center; margin-bottom: 5px; }
+        .copyright-banner { text-align: center; font-size: 13px; color: #777; margin-bottom: 30px; border-bottom: 1px solid #eee; padding-bottom: 15px; }
+        .form-group { margin-bottom: 18px; }
+        label { display: block; font-weight: 600; margin-bottom: 8px; color: #17b978; }
+        input, select, textarea { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box; }
+        .dna-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px dashed #17b978; }
+        .dna-cell label { color: #333; font-size: 14px; }
+        button { width: 100%; padding: 12px; background: #1e3d59; color: white; border: none; border-radius: 4px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 20px; }
+        button:hover { background: #17b978; }
+        #result { margin-top: 25px; padding: 15px; border-radius: 4px; display: none; }
+        .success-box { background: #e8f5e9; border-left: 5px solid #2e7d32; color: #2e7d32; }
+    </style>
+    <script>
+        // Chống sao chép mã nguồn giao diện cơ bản bằng chuột và phím tắt
+        document.addEventListener('contextmenu', event => event.preventDefault());
+        document.onkeydown = function(e) {
+            if(e.keyCode == 123 || (e.ctrlKey && e.shiftKey && (e.keyCode == 73 || e.keyCode == 74)) || (e.ctrlKey && e.keyCode == 85)) {
+                return false;
+            }
+        };
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1>🧬 HỆ THỐNG ĐỐI CHIẾU ADN TÌM NGƯỜI THÂN</h1>
+        <div class="copyright-banner">
+            &copy; 2026 Toàn bộ bản quyền thiết kế & sở hữu thuộc về: <strong>Phan Quý Vinh</strong> (Hotline: 0975898828)
+        </div>
+
+        <form id="dnaForm" onsubmit="submitForm(event)">
+            <h3>1. THÔNG TIN LIÊN LẠC BẢO MẬT</h3>
+            <div class="form-group">
+                <label>Họ và Tên:</label>
+                <input type="text" id="ho_ten" required placeholder="Nhập tên của bạn">
+            </div>
+            <div class="form-group">
+                <label>Mục đích tìm kiếm:</label>
+                <select id="loai_tim_kiem">
+                    <option value="TIM_CON">Tôi muốn tìm Con bị thất lạc</option>
+                    <option value="TIM_CHA_ME">Tôi muốn tìm Cha/Mẹ ruột</option>
+                    <option value="TIM_ANH_CH_EM">Tôi muốn tìm Anh/Chị/Em ruột</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Số điện thoại:</label>
+                <input type="tel" id="so_dien_thoai" required placeholder="Số điện thoại cá nhân">
+            </div>
+            <div class="form-group">
+                <label>Email liên hệ:</label>
+                <input type="email" id="email" required placeholder="Địa chỉ Email">
+            </div>
+            <div class="form-group">
+                <label>Địa chỉ hiện tại:</label>
+                <input type="text" id="dia_chi" required placeholder="Tỉnh/Thành phố">
+            </div>
+
+            <h3>2. CHỈ SỐ ADN (Nhập từ bản giấy kết quả xét nghiệm)</h3>
+            <p style="font-size:12px; color:#666;">Nhập hai chỉ số số cách nhau bằng dấu phẩy (Ví dụ: 14, 15 hoặc 11, 11)</p>
+            <div class="dna-grid">
+                <div class="dna-cell"><label>D3S1358:</label><input type="text" id="D3S1358" value="14, 15" required></div>
+                <div class="dna-cell"><label>vWA:</label><input type="text" id="vWA" value="16, 17" required></div>
+                <div class="dna-cell"><label>FGA:</label><input type="text" id="FGA" value="21, 24" required></div>
+                <div class="dna-cell"><label>TH01:</label><input type="text" id="TH01" value="6, 9.3" required></div>
+                <div class="dna-cell"><label>D21S11:</label><input type="text" id="D21S11" value="29, 30" required></div>
+                <div class="dna-cell"><label>D18S51:</label><input type="text" id="D18S51" value="12, 15" required></div>
+                <div class="dna-cell"><label>D5S818:</label><input type="text" id="D5S818" value="11, 12" required></div>
+                <div class="dna-cell"><label>D13S317:</label><input type="text" id="D13S317" value="8, 12" required></div>
+                <div class="dna-cell"><label>D7S820:</label><input type="text" id="D7S820" value="9, 10" required></div>
+                <div class="dna-cell"><label>D16S539:</label><input type="text" id="D16S539" value="11, 13" required></div>
+                <div class="dna-cell"><label>CSF1PO:</label><input type="text" id="CSF1PO" value="10, 12" required></div>
+                <div class="dna-cell"><label>TPOX:</label><input type="text" id="TPOX" value="8, 8" required></div>
+            </div>
+
+            <button type="submit">NỘP HỒ SƠ & TỰ ĐỘNG QUÉT ĐỐI CHIẾU</button>
+        </form>
+
+        <div id="result" class="success-box"></div>
+    </div>
+
+    <script>
+        async function submitForm(e) {
+            e.preventDefault();
+            const parseDNA = (val) => val.split(',').map(n => parseFloat(n.trim()));
+            
+            const payload = {
+                id: Math.floor(Math.random() * 100000),
+                ho_ten: document.getElementById('ho_ten').value,
+                loai_tim_kiem: document.getElementById('loai_tim_kiem').value,
+                so_dien_thoai: document.getElementById('so_dien_thoai').value,
+                email: document.getElementById('email').value,
+                dia_chi: document.getElementById('dia_chi').value,
+                dna_data: {
+                    D3S1358: parseDNA(document.getElementById('D3S1358').value),
+                    vWA: parseDNA(document.getElementById('vWA').value),
+                    FGA: parseDNA(document.getElementById('FGA').value),
+                    TH01: parseDNA(document.getElementById('TH01').value),
+                    D21S11: parseDNA(document.getElementById('D21S11').value),
+                    D18S51: parseDNA(document.getElementById('D18S51').value),
+                    D5S818: parseDNA(document.getElementById('D5S818').value),
+                    D13S317: parseDNA(document.getElementById('D13S317').value),
+                    D7S820: parseDNA(document.getElementById('D7S820').value),
+                    D16S539: parseDNA(document.getElementById('D16S539').value),
+                    CSF1PO: parseDNA(document.getElementById('CSF1PO').value),
+                    TPOX: parseDNA(document.getElementById('TPOX').value)
+                }
+            };
+
+            // Gửi dữ liệu tới API Backend chạy trên server
+            const res = await fetch('/api/dang-ky-tim-kiem/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = `<strong>${data.status}</strong><br>Số lượng trùng khớp tìm thấy: ${data.so_luong_trung_khop_uoc_tinh} người. <br><br>Hệ thống đang bảo mật số điện thoại của đối phương để tránh lừa đảo. Hãy chờ quản trị viên duyệt kết nối!`;
+        }
+    </script>
+</body>
+</html>
