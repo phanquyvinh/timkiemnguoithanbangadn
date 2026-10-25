@@ -1,44 +1,52 @@
+"""
+Hệ thống Kết nối Huyết thống qua ADN – v4.0
+Bản quyền: Phan Quý Vinh (0975898828)
+
+Đặc điểm:
+- Dữ liệu ADN tích lũy vĩnh viễn (PostgreSQL + Alembic)
+- Mã hóa SĐT/Email
+- So khớp đa tiêu chí (ADN + địa lý)
+- Nâng cấp code không mất dữ liệu cũ
+- Admin API + backup
+"""
+
 import os
 import json
+import uuid
+import re
+from datetime import datetime
 from pathlib import Path
-from fastapi import FastAPI, HTTPException, Depends, Security
+from typing import Optional, List
+
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
 from fastapi.security import APIKeyHeader
-from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
-from typing import Dict, List, Optional
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field, EmailStr, field_validator
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-from sqlalchemy import create_engine, Column, Integer, String, Text
-from sqlalchemy.orm import sessionmaker, declarative_base
+from config import get_settings
+from models import Base, UserDB, MatchLog
+from security import encrypt_field, decrypt_field, is_encryption_enabled
+from matching import tinh_diem_tong_hop
 
-# ==================== CẤU HÌNH DATABASE ====================
-DATABASE_URL = os.getenv("DATABASE_URL")
+settings = get_settings()
 
-# Render PostgreSQL dùng postgres://, SQLAlchemy cần postgresql://
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
-    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
-
-Base = declarative_base()
-
-class UserDB(Base):
-    __tablename__ = "users"
-    id = Column(Integer, primary_key=True, index=True)
-    ho_ten = Column(String(200), nullable=False)
-    loai_tim_kiem = Column(String(50), nullable=False)
-    so_dien_thoai = Column(String(30), nullable=False)
-    email = Column(String(150), nullable=False)
-    dia_chi = Column(String(300), nullable=False)
-    dna_data = Column(Text, nullable=False)  # Lưu JSON
-
-# Nếu có DATABASE_URL thì dùng PostgreSQL, không thì dùng SQLite tạm (vẫn tốt hơn RAM)
-if DATABASE_URL:
-    engine = create_engine(DATABASE_URL)
-else:
-    # SQLite file - dữ liệu vẫn còn khi restart (nhưng mất khi Render xóa disk Free)
-    engine = create_engine("sqlite:///./dna_data.db", connect_args={"check_same_thread": False})
-
+# ==================== DATABASE ====================
+# connect_args chỉ cho SQLite
+connect_args = {"check_same_thread": False} if not settings.is_postgres else {}
+engine = create_engine(settings.sqlalchemy_url, connect_args=connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Tạo bảng nếu chưa có (lần đầu). Sau này dùng Alembic để nâng cấp schema.
 Base.metadata.create_all(bind=engine)
+
 
 def get_db():
     db = SessionLocal()
@@ -47,30 +55,41 @@ def get_db():
     finally:
         db.close()
 
+
 # ==================== APP ====================
+limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
-    title="Hệ thống Kết nối Huyết thống Miễn phí",
-    description="Ứng dụng hỗ trợ cộng đồng tìm kiếm người thân thất lạc qua chỉ số ADN.\nBản quyền thuộc về Admin: Phan Quý Vinh (SDT: 0975898828).",
-    version="2.0.0"
+    title=settings.APP_NAME,
+    description=f"Bản quyền: {settings.COPYRIGHT}",
+    version=settings.VERSION,
+    docs_url="/docs" if settings.ENVIRONMENT == "development" else None,
+    redoc_url=None,
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.ALLOWED_ORIGINS if settings.ALLOWED_ORIGINS != ["*"] else ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-ADMIN_API_KEY = os.getenv("ADMIN_API_KEY", "PhanQuyVinh_Secured_2026_0975898828")
+BASE_DIR = Path(__file__).resolve().parent
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
 api_key_header = APIKeyHeader(name="X-Admin-Key", auto_error=False)
 
+
 def verify_admin(api_key: str = Security(api_key_header)):
-    if api_key != ADMIN_API_KEY:
-        raise HTTPException(status_code=403, detail="Quyền truy cập bị từ chối. Chỉ Admin Phan Quý Vinh mới có quyền.")
+    if not api_key or api_key != settings.ADMIN_API_KEY:
+        raise HTTPException(status_code=403, detail="Quyền truy cập bị từ chối.")
     return api_key
 
-# ==================== MODELS ====================
+
+# ==================== SCHEMAS ====================
 class DNAModel(BaseModel):
     D3S1358: List[float] = Field(..., min_length=2, max_length=2)
     vWA: List[float] = Field(..., min_length=2, max_length=2)
@@ -85,124 +104,288 @@ class DNAModel(BaseModel):
     CSF1PO: List[float] = Field(..., min_length=2, max_length=2)
     TPOX: List[float] = Field(..., min_length=2, max_length=2)
 
-class UserProfile(BaseModel):
-    id: int
-    ho_ten: str
-    loai_tim_kiem: str
-    so_dien_thoai: str
-    email: str
-    dia_chi: str
-    anh_chan_dung_url: Optional[str] = None
+    @field_validator("*", mode="before")
+    @classmethod
+    def check_alleles(cls, v):
+        if isinstance(v, list) and len(v) == 2:
+            for a in v:
+                if not isinstance(a, (int, float)) or a < 1 or a > 50:
+                    raise ValueError("Allele phải trong khoảng 1–50")
+        return v
+
+
+class UserRegister(BaseModel):
+    ho_ten: str = Field(..., min_length=2, max_length=200)
+    loai_tim_kiem: str = Field(..., pattern="^(TIM_CON|TIM_CHA_ME|TIM_ANH_CH_EM)$")
+    so_dien_thoai: str = Field(..., min_length=9, max_length=15)
+    email: EmailStr
+    dia_chi_hien_tai: str = Field(..., min_length=2, max_length=300)
+    dia_chi_truoc_day: Optional[str] = Field(None, max_length=300)
+    vi_tri_that_lac: Optional[str] = Field(None, max_length=300)
+    nam_that_lac: Optional[str] = Field(None, max_length=20)
     dna_data: DNAModel
 
-# ==================== LOGIC SO SÁNH ====================
-def kiem_tra_truc_he(dna_con: Dict, dna_bm: Dict) -> bool:
-    sai_lech = 0
-    for locus in dna_con.keys():
-        if locus in dna_bm:
-            giao_nhau = set(dna_con[locus]).intersection(set(dna_bm[locus]))
-            if not giao_nhau:
-                sai_lech += 1
-                if sai_lech > 1:
-                    return False
-    return True
+    @field_validator("so_dien_thoai")
+    @classmethod
+    def validate_phone(cls, v):
+        cleaned = re.sub(r"[\s\-\.]", "", v)
+        if not re.match(r"^(0|\+84)[0-9]{8,11}$", cleaned):
+            raise ValueError("Số điện thoại không hợp lệ")
+        return cleaned
 
-def kiem_tra_anh_em_ruot(dna_1: Dict, dna_2: Dict) -> bool:
-    diem_chung = 0
-    tong_so_locus = 0
-    for locus in dna_1.keys():
-        if locus in dna_2:
-            tong_so_locus += 1
-            giao_nhau = set(dna_1[locus]).intersection(set(dna_2[locus]))
-            if giao_nhau:
-                diem_chung += 1
-    return (diem_chung / tong_so_locus) >= 0.55 if tong_so_locus > 0 else False
 
-# ==================== API ====================
+class StatusUpdate(BaseModel):
+    status: str = Field(..., pattern="^(pending|reviewed|matched|rejected)$")
+    notes: Optional[str] = None
+
+
+# ==================== ROUTES ====================
+@app.get("/", response_class=HTMLResponse)
+async def home(request: Request):
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "version": settings.VERSION, "copyright": settings.COPYRIGHT},
+    )
+
+
 @app.post("/api/dang-ky-tim-kiem/")
-def dang_ky_ho_so(user: UserProfile, db=Depends(get_db)):
-    # Lưu vào database
+@limiter.limit(settings.RATE_LIMIT)
+def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
+    user_id = str(uuid.uuid4())
+
     new_user = UserDB(
-        id=user.id,
-        ho_ten=user.ho_ten,
+        id=user_id,
+        ho_ten=user.ho_ten.strip(),
         loai_tim_kiem=user.loai_tim_kiem,
-        so_dien_thoai=user.so_dien_thoai,
-        email=user.email,
-        dia_chi=user.dia_chi,
-        dna_data=json.dumps(user.dna_data.model_dump())
+        so_dien_thoai_enc=encrypt_field(user.so_dien_thoai),
+        email_enc=encrypt_field(user.email.lower()),
+        dia_chi_hien_tai=user.dia_chi_hien_tai.strip(),
+        dia_chi_truoc_day=(user.dia_chi_truoc_day or "").strip() or None,
+        vi_tri_that_lac=(user.vi_tri_that_lac or "").strip() or None,
+        nam_that_lac=(user.nam_that_lac or "").strip() or None,
+        dna_data=json.dumps(user.dna_data.model_dump()),
+        status="pending",
     )
     db.add(new_user)
     db.commit()
 
-    # Lấy tất cả hồ sơ để so sánh
-    all_users = db.query(UserDB).all()
-    ket_qua_goi_y = []
-
+    # So khớp với toàn bộ hồ sơ đã tích lũy
+    all_users = db.query(UserDB).filter(UserDB.id != user_id).all()
+    ket_qua = []
     user_dna = user.dna_data.model_dump()
 
     for target in all_users:
-        if target.id == user.id:
-            continue
-
         try:
             target_dna = json.loads(target.dna_data)
-        except:
+        except Exception:
             continue
 
-        # 1. Cha/Mẹ - Con
-        if (user.loai_tim_kiem == "TIM_CON" and target.loai_tim_kiem == "TIM_CHA_ME") or \
-           (user.loai_tim_kiem == "TIM_CHA_ME" and target.loai_tim_kiem == "TIM_CON"):
-            if kiem_tra_truc_he(user_dna, target_dna):
-                ket_qua_goi_y.append({
-                    "ho_ten": target.ho_ten,
-                    "loai_quan_he": "Cha/Mẹ - Con trực hệ (Khoanh vùng)",
-                    "thong_bao": "Vui lòng chờ quản trị viên duyệt kết nối bảo mật."
-                })
+        result = tinh_diem_tong_hop(
+            user_dna=user_dna,
+            target_dna=target_dna,
+            user_loai=user.loai_tim_kiem,
+            target_loai=target.loai_tim_kiem,
+            user_vi_tri=user.vi_tri_that_lac,
+            target_vi_tri=target.vi_tri_that_lac,
+            user_dia_chi_truoc=user.dia_chi_truoc_day,
+            target_dia_chi_truoc=target.dia_chi_truoc_day,
+            user_dia_chi_hien=user.dia_chi_hien_tai,
+            target_dia_chi_hien=target.dia_chi_hien_tai,
+            user_nam=user.nam_that_lac,
+            target_nam=target.nam_that_lac,
+        )
 
-        # 2. Anh/Chị/Em
-        elif user.loai_tim_kiem == "TIM_ANH_CH_EM" and target.loai_tim_kiem == "TIM_ANH_CH_EM":
-            if kiem_tra_anh_em_ruot(user_dna, target_dna):
-                ket_qua_goi_y.append({
-                    "ho_ten": target.ho_ten,
-                    "loai_quan_he": "Anh/Chị/Em ruột tiềm năng (Khoanh vùng)",
-                    "thong_bao": "Vui lòng chờ quản trị viên duyệt kết nối bảo mật."
-                })
+        if result and result["score"] >= 55:
+            # Ghi log match (tích lũy lịch sử)
+            log = MatchLog(
+                user_id=user_id,
+                target_id=target.id,
+                loai_quan_he=result["loai_quan_he"],
+                diem_tin_cay=result["score"],
+                ly_do=json.dumps(result["reasons"], ensure_ascii=False),
+            )
+            db.add(log)
+
+            ket_qua.append({
+                "ho_ten": target.ho_ten,
+                "loai_quan_he": result["loai_quan_he"],
+                "diem_tin_cay": result["score"],
+                "ly_do": result["reasons"],
+                "thong_bao": "Đã khoanh vùng. Chờ Admin duyệt kết nối bảo mật.",
+            })
+
+    db.commit()
+    ket_qua.sort(key=lambda x: x["diem_tin_cay"], reverse=True)
 
     return {
-        "status": "Hệ thống đã ghi nhận hồ sơ bảo mật thành công",
-        "so_luong_trung_khop_uoc_tinh": len(ket_qua_goi_y),
-        "goi_y_phah_he": ket_qua_goi_y,
-        "copyright": "Bản quyền ứng dụng thuộc về Phan Quý Vinh - 0975898828"
+        "status": "Hồ sơ đã được ghi nhận bảo mật thành công",
+        "ma_ho_so": user_id,
+        "so_luong_trung_khop_uoc_tinh": len(ket_qua),
+        "goi_y_phah_he": ket_qua[:15],
+        "huong_dan": (
+            "Hãy lưu MÃ HỒ SƠ để tra cứu sau. "
+            "Hệ thống bảo mật số điện thoại đối phương. "
+            "Admin sẽ liên hệ khi có kết quả được duyệt."
+        ),
+        "encryption_enabled": is_encryption_enabled(),
+        "copyright": settings.COPYRIGHT,
     }
 
+
+@app.get("/api/tra-cuu/{ma_ho_so}")
+@limiter.limit("20/minute")
+def tra_cuu(request: Request, ma_ho_so: str, db=Depends(get_db)):
+    user = db.query(UserDB).filter(UserDB.id == ma_ho_so).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
+    return {
+        "ma_ho_so": user.id,
+        "ho_ten": user.ho_ten,
+        "loai_tim_kiem": user.loai_tim_kiem,
+        "status": user.status,
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+        "thong_bao": (
+            "Hồ sơ đang được bảo mật. "
+            "Khi có kết quả duyệt, Admin sẽ liên hệ qua SĐT/Email bạn đã cung cấp."
+        ),
+    }
+
+
+# ---------- ADMIN ----------
 @app.get("/api/admin/danh-sach/")
-def danh_sach_ho_so(api_key: str = Depends(verify_admin), db=Depends(get_db)):
-    """Chỉ Admin xem được danh sách hồ sơ"""
-    users = db.query(UserDB).all()
+def admin_list(
+    api_key: str = Depends(verify_admin),
+    db=Depends(get_db),
+    status: Optional[str] = None,
+    limit: int = 200,
+):
+    q = db.query(UserDB).order_by(UserDB.created_at.desc())
+    if status:
+        q = q.filter(UserDB.status == status)
+    users = q.limit(min(limit, 500)).all()
     result = []
     for u in users:
         result.append({
             "id": u.id,
             "ho_ten": u.ho_ten,
             "loai_tim_kiem": u.loai_tim_kiem,
-            "so_dien_thoai": u.so_dien_thoai,
-            "email": u.email,
-            "dia_chi": u.dia_chi
+            "so_dien_thoai": decrypt_field(u.so_dien_thoai_enc),
+            "email": decrypt_field(u.email_enc),
+            "dia_chi_hien_tai": u.dia_chi_hien_tai,
+            "dia_chi_truoc_day": u.dia_chi_truoc_day,
+            "vi_tri_that_lac": u.vi_tri_that_lac,
+            "nam_that_lac": u.nam_that_lac,
+            "status": u.status,
+            "notes": u.notes,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
         })
-    return {"tong_so": len(result), "danh_sach": result}
+    return {
+        "tong_so": len(result),
+        "encryption_enabled": is_encryption_enabled(),
+        "danh_sach": result,
+    }
 
-@app.post("/api/admin/update-system/", dependencies=[Depends(verify_admin)])
-def update_system():
-    return {"status": "Xác thực Admin Phan Quý Vinh thành công."}
+
+@app.patch("/api/admin/ho-so/{user_id}/status")
+def admin_update_status(
+    user_id: str,
+    body: StatusUpdate,
+    api_key: str = Depends(verify_admin),
+    db=Depends(get_db),
+):
+    user = db.query(UserDB).filter(UserDB.id == user_id).first()
+    if not user:
+        raise HTTPException(404, "Không tìm thấy hồ sơ")
+    user.status = body.status
+    if body.notes is not None:
+        user.notes = body.notes
+    user.updated_at = datetime.utcnow()
+    db.commit()
+    return {"status": "ok", "id": user_id, "new_status": body.status}
+
+
+@app.get("/api/admin/matches/")
+def admin_matches(api_key: str = Depends(verify_admin), db=Depends(get_db), limit: int = 100):
+    logs = db.query(MatchLog).order_by(MatchLog.created_at.desc()).limit(limit).all()
+    return {
+        "tong_so": len(logs),
+        "matches": [
+            {
+                "id": m.id,
+                "user_id": m.user_id,
+                "target_id": m.target_id,
+                "loai_quan_he": m.loai_quan_he,
+                "diem_tin_cay": m.diem_tin_cay,
+                "ly_do": json.loads(m.ly_do) if m.ly_do else [],
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+                "is_notified": m.is_notified,
+            }
+            for m in logs
+        ],
+    }
+
+
+@app.get("/api/admin/backup/")
+def admin_backup(api_key: str = Depends(verify_admin), db=Depends(get_db)):
+    """
+    Xuất toàn bộ dữ liệu ADN (dạng JSON) để backup.
+    Giữ file này an toàn – đây là bản sao dữ liệu quan trọng.
+    """
+    users = db.query(UserDB).all()
+    data = []
+    for u in users:
+        data.append({
+            "id": u.id,
+            "ho_ten": u.ho_ten,
+            "loai_tim_kiem": u.loai_tim_kiem,
+            "so_dien_thoai": decrypt_field(u.so_dien_thoai_enc),
+            "email": decrypt_field(u.email_enc),
+            "dia_chi_hien_tai": u.dia_chi_hien_tai,
+            "dia_chi_truoc_day": u.dia_chi_truoc_day,
+            "vi_tri_that_lac": u.vi_tri_that_lac,
+            "nam_that_lac": u.nam_that_lac,
+            "dna_data": json.loads(u.dna_data),
+            "status": u.status,
+            "notes": u.notes,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        })
+    return {
+        "version": settings.VERSION,
+        "exported_at": datetime.utcnow().isoformat(),
+        "total": len(data),
+        "users": data,
+    }
+
+
+@app.get("/api/admin/stats/")
+def admin_stats(api_key: str = Depends(verify_admin), db=Depends(get_db)):
+    total = db.query(UserDB).count()
+    pending = db.query(UserDB).filter(UserDB.status == "pending").count()
+    matched = db.query(UserDB).filter(UserDB.status == "matched").count()
+    matches = db.query(MatchLog).count()
+    return {
+        "total_ho_so": total,
+        "pending": pending,
+        "matched": matched,
+        "total_matches_logged": matches,
+        "encryption_enabled": is_encryption_enabled(),
+        "database": "PostgreSQL" if settings.is_postgres else "SQLite",
+        "version": settings.VERSION,
+    }
+
 
 @app.get("/health")
-def health_check():
-    db_type = "PostgreSQL" if DATABASE_URL else "SQLite"
-    return {"status": "ok", "database": db_type, "version": "2.0.0"}
-
-# Serve frontend
-BASE_DIR = Path(__file__).resolve().parent
-
-@app.get("/")
-async def serve_index():
-    return FileResponse(BASE_DIR / "index.html")
+def health():
+    return {
+        "status": "ok",
+        "version": settings.VERSION,
+        "database": "PostgreSQL" if settings.is_postgres else "SQLite",
+        "encryption": is_encryption_enabled(),
+        "features": [
+            "DNA + location multi-criteria matching",
+            "Encrypted phone/email",
+            "Match history log",
+            "Admin backup & status management",
+            "Alembic-ready for zero-data-loss upgrades",
+        ],
+    }
