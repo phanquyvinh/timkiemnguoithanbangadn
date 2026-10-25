@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Hệ thống tìm người thân thất lạc qua ADN + địa lý. Bảo mật, tích lũy dữ liệu, miễn phí.">
+    <title>ADN Kết Nối – Tìm Người Thân Thất Lạc | Phan Quý Vinh</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="bg-pattern"></div>
+
+    <header class="header">
+        <div class="container header-inner">
+            <div class="logo">
+                <span class="logo-icon">🧬</span>
+                <div>
+                    <div class="logo-title">ADN Kết Nối</div>
+                    <div class="logo-sub">Tìm người thân thất lạc • v{{ version }}</div>
+                </div>
+            </div>
+            <div class="header-badge">Bảo mật • Tích lũy • Miễn phí</div>
+        </div>
+    </header>
+
+    <main class="container">
+        <section class="hero">
+            <h1>Đối chiếu ADN + Địa lý<br>để tìm lại người thân</h1>
+            <p class="hero-desc">
+                Mỗi hồ sơ ADN được lưu bảo mật và tích lũy vĩnh viễn.
+                Hệ thống tự động so khớp đa tiêu chí (ADN + vị trí thất lạc + địa chỉ trước đây)
+                để khoanh vùng chính xác hơn.
+            </p>
+        </section>
+
+        <section class="card form-card">
+            <form id="dnaForm" novalidate>
+                <div class="section-title">
+                    <span class="step">1</span>
+                    Thông tin liên lạc bảo mật
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="ho_ten">Họ và tên <span class="req">*</span></label>
+                        <input type="text" id="ho_ten" required placeholder="Nguyễn Văn A" autocomplete="name">
+                    </div>
+                    <div class="form-group">
+                        <label for="loai_tim_kiem">Mục đích tìm kiếm <span class="req">*</span></label>
+                        <select id="loai_tim_kiem" required>
+                            <option value="TIM_CON">Tôi muốn tìm Con bị thất lạc</option>
+                            <option value="TIM_CHA_ME">Tôi muốn tìm Cha/Mẹ ruột</option>
+                            <option value="TIM_ANH_CH_EM">Tôi muốn tìm Anh/Chị/Em ruột</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="so_dien_thoai">Số điện thoại <span class="req">*</span></label>
+                        <input type="tel" id="so_dien_thoai" required placeholder="09xx xxx xxx" autocomplete="tel">
+                    </div>
+                    <div class="form-group">
+                        <label for="email">Email liên hệ <span class="req">*</span></label>
+                        <input type="email" id="email" required placeholder="email@example.com" autocomplete="email">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="dia_chi_hien_tai">Địa chỉ hiện tại <span class="req">*</span></label>
+                    <input type="text" id="dia_chi_hien_tai" required placeholder="Ví dụ: Quận Cầu Giấy, Hà Nội">
+                </div>
+
+                <div class="section-title mt-lg">
+                    <span class="step">2</span>
+                    Thông tin địa lý giúp thu hẹp kết quả
+                    <span class="hint">(Càng chi tiết càng dễ tìm đúng)</span>
+                </div>
+
+                <div class="info-box">
+                    Hệ thống so sánh <strong>vị trí thất lạc</strong>, <strong>địa chỉ trước đây</strong>
+                    và năm thất lạc với các hồ sơ đã tích lũy để giảm kết quả trùng khớp ngẫu nhiên.
+                </div>
+
+                <div class="grid-2">
+                    <div class="form-group">
+                        <label for="vi_tri_that_lac">Vị trí thất lạc / nơi mất liên lạc</label>
+                        <input type="text" id="vi_tri_that_lac" placeholder="Ví dụ: Bệnh viện Nhi Trung ương, Hà Nội">
+                    </div>
+                    <div class="form-group">
+                        <label for="nam_that_lac">Năm thất lạc (tùy chọn)</label>
+                        <input type="text" id="nam_that_lac" placeholder="Ví dụ: 1995 – 2000">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="dia_chi_truoc_day">Địa chỉ sinh sống trước đây</label>
+                    <input type="text" id="dia_chi_truoc_day" placeholder="Ví dụ: Xã A, Huyện B, Tỉnh C (trước năm 2005)">
+                </div>
+
+                <div class="section-title mt-lg">
+                    <span class="step">3</span>
+                    Chỉ số ADN (từ bản kết quả xét nghiệm)
+                </div>
+
+                <p class="dna-note">
+                    Nhập <strong>hai allele</strong> cách nhau bằng dấu phẩy (ví dụ: <code>14, 15</code>).
+                    Dữ liệu mặc định chỉ để demo – hãy thay bằng số thật.
+                </p>
+
+                <div class="dna-grid" id="dnaGrid"></div>
+
+                <button type="submit" class="btn-submit" id="btnSubmit">
+                    <span class="btn-text">Nộp hồ sơ & Tự động quét đối chiếu</span>
+                    <span class="btn-loading" hidden>
+                        <span class="spinner"></span> Đang xử lý bảo mật...
+                    </span>
+                </button>
+            </form>
+
+            <div id="result" class="result-box" hidden></div>
+        </section>
+
+        <!-- Tra cứu nhanh -->
+        <section class="card">
+            <div class="section-title">
+                <span class="step">?</span>
+                Tra cứu trạng thái hồ sơ đã nộp
+            </div>
+            <div class="lookup-row">
+                <input type="text" id="lookupId" placeholder="Dán mã hồ sơ UUID vào đây">
+                <button type="button" class="btn-secondary" id="btnLookup">Tra cứu</button>
+            </div>
+            <div id="lookupResult" class="result-box" hidden style="margin-top:16px;"></div>
+        </section>
+
+        <section class="card how-it-works">
+            <h2>Vì sao dữ liệu không bị mất khi nâng cấp?</h2>
+            <div class="steps">
+                <div class="step-item">
+                    <div class="step-num">01</div>
+                    <h3>PostgreSQL bền vững</h3>
+                    <p>Dữ liệu ADN nằm trên database riêng, không phụ thuộc code. Redeploy hay nâng cấp code đều không đụng đến dữ liệu.</p>
+                </div>
+                <div class="step-item">
+                    <div class="step-num">02</div>
+                    <h3>Alembic migration</h3>
+                    <p>Khi thêm cột mới, hệ thống chỉ ALTER TABLE, không bao giờ DROP. Mọi hồ sơ cũ vẫn còn nguyên.</p>
+                </div>
+                <div class="step-item">
+                    <div class="step-num">03</div>
+                    <h3>Backup định kỳ</h3>
+                    <p>Admin có thể xuất toàn bộ database ra JSON bất cứ lúc nào để lưu trữ ngoài.</p>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2026 Toàn bộ bản quyền thuộc về <strong>Phan Quý Vinh</strong></p>
+            <p class="hotline">Hotline: <a href="tel:0975898828">0975 898 828</a></p>
+            <p class="disclaimer">
+                Hệ thống chỉ hỗ trợ khoanh vùng sơ bộ.
+                Kết luận quan hệ huyết thống chính thức cần xét nghiệm tại cơ sở y tế có thẩm quyền.
+            </p>
+        </div>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
