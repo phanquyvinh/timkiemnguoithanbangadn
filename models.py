@@ -23,11 +23,25 @@ class UserDB(Base):
     so_dien_thoai_enc = Column(String(500), nullable=False)
     email_enc = Column(String(500), nullable=False)
 
-    # Địa lý – dùng để thu hẹp kết quả
+    # Địa lý cũ – GIỮ NGUYÊN để không mất dữ liệu lịch sử
     dia_chi_hien_tai = Column(String(300), nullable=False)
     dia_chi_truoc_day = Column(String(300), nullable=True, index=True)
     vi_tri_that_lac = Column(String(300), nullable=True, index=True)
     nam_that_lac = Column(String(20), nullable=True)
+
+    # === BỔ SUNG: 2. Thông tin người cần tìm ===
+    nguoi_can_tim_ho_ten = Column(String(200), nullable=True, index=True)
+    nguoi_can_tim_bi_danh = Column(String(200), nullable=True)
+    nguoi_can_tim_nam_sinh = Column(String(50), nullable=True)  # Khoảng năm sinh
+    nguoi_can_tim_gioi_tinh = Column(String(20), nullable=True, index=True)
+    dac_diem_nhan_dang = Column(Text, nullable=True)
+
+    # === BỔ SUNG: 3. Thông tin địa lý & thời gian thất lạc chi tiết mới ===
+    noi_cuoi_cung_gap = Column(String(300), nullable=True, index=True)
+    thoi_diem_mat_lien_lac = Column(String(100), nullable=True)
+    hoan_canh_mat_lien_lac = Column(Text, nullable=True)
+    noi_thuong_sinh_song_truoc_day = Column(String(300), nullable=True, index=True)
+    cac_cach_da_thu = Column(Text, nullable=True)
 
     # ADN lưu JSON text (12 locus)
     dna_data = Column(Text, nullable=False)
