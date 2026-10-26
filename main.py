@@ -213,7 +213,7 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         except Exception:
             continue
 
-        # Kế thừa hàm tính điểm cũ bằng cách truyền tham số địa lý tương thích
+        # Gọi hàm chấm điểm đa tiêu chí nâng cao kết hợp chéo tên và phân tích hoàn cảnh
         result = tinh_diem_tong_hop(
             user_dna=user_dna,
             target_dna=target_dna,
@@ -227,6 +227,16 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
             target_dia_chi_hien=target.dia_chi_hien_tai,
             user_nam=new_user.nam_that_lac,
             target_nam=target.nam_that_lac,
+            
+            # TRUYỀN THÊM CÁC THAM SỐ ĐỂ THUẬT TOÁN ĐỐI CHIẾU THÔNG MINH HƠN
+            user_name_input=user.ho_ten,
+            target_name_input=target.ho_ten,
+            user_target_name=user.nguoi_can_tim_ho_ten,
+            target_target_name=target.nguoi_can_tim_ho_ten,
+            user_hoan_canh=user.hoan_canh_mat_lien_lac,
+            target_hoan_canh=target.hoan_canh_mat_lien_lac,
+            user_dac_diem=user.dac_diem_nhan_dang,
+            target_dac_diem=target.dac_diem_nhan_dang
         )
 
         if result and result["score"] >= 55:
@@ -240,17 +250,3 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
             db.add(log)
 
             ket_qua.append({
-                "ho_ten": target.ho_ten,
-                "loai_quan_he": result["loai_quan_he"],
-                "diem_tin_cay": result["score"],
-                "ly_do": result["reasons"],
-                "thong_bao": "Đã khoanh vùng. Chờ Admin duyệt kết nối bảo mật.",
-            })
-
-    db.commit()
-    ket_qua.sort(key=lambda x: x["diem_tin_cay"], reverse=True)
-
-    return {
-        "status": "Hồ sơ đã được ghi nhận bảo mật thành công",
-        "ma_ho_so": user_id,
-        "so_luong_trung_khop_uoc_tinh": len(ket_qua),
