@@ -14,7 +14,7 @@ import os
 import json
 import uuid
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List
 
@@ -119,20 +119,16 @@ class UserRegister(BaseModel):
     email: EmailStr
     dia_chi_hien_tai: str = Field(..., min_length=2, max_length=300)
     
-    # Giữ các trường cũ để tương thích ngược dữ liệu nếu cần
     dia_chi_truoc_day: Optional[str] = Field(None, max_length=300)
     vi_tri_that_lac: Optional[str] = Field(None, max_length=300)
     nam_that_lac: Optional[str] = Field(None, max_length=20)
     
-    # === CẬP NHẬT TRƯỜNG MỚI THEO FORM INDEX.HTML ===
-    # 2. Thông tin người cần tìm
     nguoi_can_tim_ho_ten: Optional[str] = Field(None, max_length=200)
     nguoi_can_tim_bi_danh: Optional[str] = Field(None, max_length=200)
     nguoi_can_tim_nam_sinh: Optional[str] = Field(None, max_length=50)
     nguoi_can_tim_gioi_tinh: Optional[str] = Field(None, max_length=20)
     dac_diem_nhan_dang: Optional[str] = Field(None)
     
-    # 3. Thông tin địa lý & thời gian chi tiết mới
     noi_cuoi_cung_gap: Optional[str] = Field(None, max_length=300)
     thoi_diem_mat_lien_lac: Optional[str] = Field(None, max_length=100)
     hoan_canh_mat_lien_lac: Optional[str] = Field(None)
@@ -164,12 +160,16 @@ async def home(request: Request):
     )
 
 
+@app.get("/health")
+def health_check():
+    return {"status": "healthy", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
 @app.post("/api/dang-ky-tim-kiem/")
 @limiter.limit(settings.RATE_LIMIT)
 def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
     user_id = str(uuid.uuid4())
 
-    # Map dữ liệu sang Database model mới
     new_user = UserDB(
         id=user_id,
         ho_ten=user.ho_ten.strip(),
@@ -178,12 +178,10 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         email_enc=encrypt_field(user.email.lower()),
         dia_chi_hien_tai=user.dia_chi_hien_tai.strip(),
         
-        # Đồng bộ các trường địa lý cũ (bằng cách lấy giá trị từ trường chi tiết mới tương đương)
         dia_chi_truoc_day=(user.noi_thuong_sinh_song_truoc_day or user.dia_chi_truoc_day or "").strip() or None,
         vi_tri_that_lac=(user.noi_cuoi_cung_gap or user.vi_tri_that_lac or "").strip() or None,
         nam_that_lac=(user.thoi_diem_mat_lien_lac or user.nam_that_lac or "").strip() or None,
         
-        # Lưu các trường thông tin chi tiết mới vào DB
         nguoi_can_tim_ho_ten=(user.nguoi_can_tim_ho_ten or "").strip() or None,
         nguoi_can_tim_bi_danh=(user.nguoi_can_tim_bi_danh or "").strip() or None,
         nguoi_can_tim_nam_sinh=(user.nguoi_can_tim_nam_sinh or "").strip() or None,
@@ -202,7 +200,6 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
     db.add(new_user)
     db.commit()
 
-    # So khớp với toàn bộ hồ sơ đã tích lũy
     all_users = db.query(UserDB).filter(UserDB.id != user_id).all()
     ket_qua = []
     user_dna = user.dna_data.model_dump()
@@ -213,7 +210,6 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         except Exception:
             continue
 
-        # Gọi hàm chấm điểm đa tiêu chí nâng cao kết hợp chéo tên và phân tích hoàn cảnh
         result = tinh_diem_tong_hop(
             user_dna=user_dna,
             target_dna=target_dna,
@@ -228,7 +224,6 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
             user_nam=new_user.nam_that_lac,
             target_nam=target.nam_that_lac,
             
-            # TRUYỀN THÊM CÁC THAM SỐ ĐỂ THUẬT TOÁN ĐỐI CHIẾU THÔNG MINH HƠN
             user_name_input=user.ho_ten,
             target_name_input=target.ho_ten,
             user_target_name=user.nguoi_can_tim_ho_ten,
@@ -250,3 +245,125 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
             db.add(log)
 
             ket_qua.append({
+                "target_id": target.id,
+                "loai_quan_he": result["loai_quan_he"],
+                "diem_tin_cay": result["score"],
+                "ly_do": result["reasons"]
+            })
+            
+    db.commit()
+    return {
+        "status": "success", 
+        "ma_ho_so": user_id, 
+        "matches_found": len(ket_qua), 
+        "matches": ket_qua
+    }
+
+
+@app.get("/api/tra-cuu/{ma_ho_so}")
+def tra_cuu_ho_so(ma_ho_so: str, db=Depends(get_db)):
+    record = db.query(UserDB).filter(UserDB.id == ma_ho_so).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Không tìm thấy mã hồ sơ.")
+    return {
+        "id": record.id,
+        "ho_ten": record.ho_ten,
+        "status": record.status,
+        "created_at": record.created_at.isoformat() if record.created_at else None,
+        "notes": record.notes
+    }
+
+
+# ==================== ADMIN API ====================
+@app.get("/api/admin/danh-sach/")
+def admin_danh_sach(db=Depends(get_db), token: str = Depends(verify_admin)):
+    users = db.query(UserDB).all()
+    out = []
+    for u in users:
+        out.append({
+            "id": u.id,
+            "ho_ten": u.ho_ten,
+            "loai_tim_kiem": u.loai_tim_kiem,
+            "so_dien_thoai": decrypt_field(u.so_dien_thoai_enc),
+            "email": decrypt_field(u.email_enc),
+            "dia_chi_hien_tai": u.dia_chi_hien_tai,
+            "status": u.status,
+            "created_at": u.created_at.isoformat() if u.created_at else None
+        })
+    return out
+
+
+@app.get("/api/admin/matches/")
+def admin_matches(db=Depends(get_db), token: str = Depends(verify_admin)):
+    logs = db.query(MatchLog).order_by(MatchLog.created_at.desc()).all()
+    out = []
+    for l in logs:
+        out.append({
+            "id": l.id,
+            "user_id": l.user_id,
+            "target_id": l.target_id,
+            "loai_quan_he": l.loai_quan_he,
+            "diem_tin_cay": l.diem_tin_cay,
+            "ly_do": json.loads(l.ly_do) if l.ly_do else [],
+            "created_at": l.created_at.isoformat() if l.created_at else None
+        })
+    return out
+
+
+@app.get("/api/admin/stats/")
+def admin_stats(db=Depends(get_db), token: str = Depends(verify_admin)):
+    total_users = db.query(UserDB).count()
+    total_matches = db.query(MatchLog).count()
+    pending = db.query(UserDB).filter(UserDB.status == "pending").count()
+    return {
+        "tong_so_ho_so": total_users,
+        "tong_so_cap_khop": total_matches,
+        "ho_so_cho_duyet": pending
+    }
+
+
+@app.patch("/api/admin/ho-so/{id}/status")
+def admin_update_status(id: str, payload: StatusUpdate, db=Depends(get_db), token: str = Depends(verify_admin)):
+    record = db.query(UserDB).filter(UserDB.id == id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ.")
+    record.status = payload.status
+    if payload.notes:
+        record.notes = payload.notes
+    db.commit()
+    return {"status": "updated", "id": id, "new_status": payload.status}
+
+
+@app.get("/api/admin/backup/")
+def admin_backup(db=Depends(get_db), token: str = Depends(verify_admin)):
+    users = db.query(UserDB).all()
+    backup_data = []
+    for u in users:
+        backup_data.append({
+            "id": u.id,
+            "ho_ten": u.ho_ten,
+            "loai_tim_kiem": u.loai_tim_kiem,
+            "so_dien_thoai_enc": u.so_dien_thoai_enc,
+            "email_enc": u.email_enc,
+            "dia_chi_hien_tai": u.dia_chi_hien_tai,
+            "dia_chi_truoc_day": u.dia_chi_truoc_day,
+            "vi_tri_that_lac": u.vi_tri_that_lac,
+            "nam_that_lac": u.nam_that_lac,
+            "nguoi_can_tim_ho_ten": u.nguoi_can_tim_ho_ten,
+            "nguoi_can_tim_bi_danh": u.nguoi_can_tim_bi_danh,
+            "nguoi_can_tim_nam_sinh": u.nguoi_can_tim_nam_sinh,
+            "nguoi_can_tim_gioi_tinh": u.nguoi_can_tim_gioi_tinh,
+            "dac_diem_nhan_dang": u.dac_diem_nhan_dang,
+            "noi_cuoi_cung_gap": u.noi_cuoi_cung_gap,
+            "thoi_diem_mat_lien_lac": u.thoi_diem_mat_lien_lac,
+            "hoan_canh_mat_lien_lac": u.hoan_canh_mat_lien_lac,
+            "noi_thuong_sinh_song_truoc_day": u.noi_thuong_sinh_song_truoc_day,
+            "cac_cach_da_thu": u.cac_cach_da_thu,
+            "dna_data": json.loads(u.dna_data) if u.dna_data else {},
+            "status": u.status,
+            "notes": u.notes
+        })
+    return JSONResponse(
+        content=backup_data,
+        headers={"Content-Disposition": f"attachment; filename=backup_dna_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"}
+    )
