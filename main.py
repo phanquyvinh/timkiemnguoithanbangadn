@@ -39,12 +39,10 @@ from matching import tinh_diem_tong_hop
 settings = get_settings()
 
 # ==================== DATABASE ====================
-# connect_args chỉ cho SQLite
 connect_args = {"check_same_thread": False} if not settings.is_postgres else {}
 engine = create_engine(settings.sqlalchemy_url, connect_args=connect_args, pool_pre_ping=True)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Tạo bảng nếu chưa có (lần đầu). Sau này dùng Alembic để nâng cấp schema.
 Base.metadata.create_all(bind=engine)
 
 
@@ -120,9 +118,27 @@ class UserRegister(BaseModel):
     so_dien_thoai: str = Field(..., min_length=9, max_length=15)
     email: EmailStr
     dia_chi_hien_tai: str = Field(..., min_length=2, max_length=300)
+    
+    # Giữ các trường cũ để tương thích ngược dữ liệu nếu cần
     dia_chi_truoc_day: Optional[str] = Field(None, max_length=300)
     vi_tri_that_lac: Optional[str] = Field(None, max_length=300)
     nam_that_lac: Optional[str] = Field(None, max_length=20)
+    
+    # === CẬP NHẬT TRƯỜNG MỚI THEO FORM INDEX.HTML ===
+    # 2. Thông tin người cần tìm
+    nguoi_can_tim_ho_ten: Optional[str] = Field(None, max_length=200)
+    nguoi_can_tim_bi_danh: Optional[str] = Field(None, max_length=200)
+    nguoi_can_tim_nam_sinh: Optional[str] = Field(None, max_length=50)
+    nguoi_can_tim_gioi_tinh: Optional[str] = Field(None, max_length=20)
+    dac_diem_nhan_dang: Optional[str] = Field(None)
+    
+    # 3. Thông tin địa lý & thời gian chi tiết mới
+    noi_cuoi_cung_gap: Optional[str] = Field(None, max_length=300)
+    thoi_diem_mat_lien_lac: Optional[str] = Field(None, max_length=100)
+    hoan_canh_mat_lien_lac: Optional[str] = Field(None)
+    noi_thuong_sinh_song_truoc_day: Optional[str] = Field(None, max_length=300)
+    cac_cach_da_thu: Optional[str] = Field(None)
+    
     dna_data: DNAModel
 
     @field_validator("so_dien_thoai")
@@ -153,6 +169,7 @@ async def home(request: Request):
 def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
     user_id = str(uuid.uuid4())
 
+    # Map dữ liệu sang Database model mới
     new_user = UserDB(
         id=user_id,
         ho_ten=user.ho_ten.strip(),
@@ -160,9 +177,25 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         so_dien_thoai_enc=encrypt_field(user.so_dien_thoai),
         email_enc=encrypt_field(user.email.lower()),
         dia_chi_hien_tai=user.dia_chi_hien_tai.strip(),
-        dia_chi_truoc_day=(user.dia_chi_truoc_day or "").strip() or None,
-        vi_tri_that_lac=(user.vi_tri_that_lac or "").strip() or None,
-        nam_that_lac=(user.nam_that_lac or "").strip() or None,
+        
+        # Đồng bộ các trường địa lý cũ (bằng cách lấy giá trị từ trường chi tiết mới tương đương)
+        dia_chi_truoc_day=(user.noi_thuong_sinh_song_truoc_day or user.dia_chi_truoc_day or "").strip() or None,
+        vi_tri_that_lac=(user.noi_cuoi_cung_gap or user.vi_tri_that_lac or "").strip() or None,
+        nam_that_lac=(user.thoi_diem_mat_lien_lac or user.nam_that_lac or "").strip() or None,
+        
+        # Lưu các trường thông tin chi tiết mới vào DB
+        nguoi_can_tim_ho_ten=(user.nguoi_can_tim_ho_ten or "").strip() or None,
+        nguoi_can_tim_bi_danh=(user.nguoi_can_tim_bi_danh or "").strip() or None,
+        nguoi_can_tim_nam_sinh=(user.nguoi_can_tim_nam_sinh or "").strip() or None,
+        nguoi_can_tim_gioi_tinh=(user.nguoi_can_tim_gioi_tinh or "").strip() or None,
+        dac_diem_nhan_dang=(user.dac_diem_nhan_dang or "").strip() or None,
+        
+        noi_cuoi_cung_gap=(user.noi_cuoi_cung_gap or "").strip() or None,
+        thoi_diem_mat_lien_lac=(user.thoi_diem_mat_lien_lac or "").strip() or None,
+        hoan_canh_mat_lien_lac=(user.hoan_canh_mat_lien_lac or "").strip() or None,
+        noi_thuong_sinh_song_truoc_day=(user.noi_thuong_sinh_song_truoc_day or "").strip() or None,
+        cac_cach_da_thu=(user.cac_cach_da_thu or "").strip() or None,
+        
         dna_data=json.dumps(user.dna_data.model_dump()),
         status="pending",
     )
@@ -180,23 +213,23 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         except Exception:
             continue
 
+        # Kế thừa hàm tính điểm cũ bằng cách truyền tham số địa lý tương thích
         result = tinh_diem_tong_hop(
             user_dna=user_dna,
             target_dna=target_dna,
             user_loai=user.loai_tim_kiem,
             target_loai=target.loai_tim_kiem,
-            user_vi_tri=user.vi_tri_that_lac,
+            user_vi_tri=new_user.vi_tri_that_lac,
             target_vi_tri=target.vi_tri_that_lac,
-            user_dia_chi_truoc=user.dia_chi_truoc_day,
+            user_dia_chi_truoc=new_user.dia_chi_truoc_day,
             target_dia_chi_truoc=target.dia_chi_truoc_day,
             user_dia_chi_hien=user.dia_chi_hien_tai,
             target_dia_chi_hien=target.dia_chi_hien_tai,
-            user_nam=user.nam_that_lac,
+            user_nam=new_user.nam_that_lac,
             target_nam=target.nam_that_lac,
         )
 
         if result and result["score"] >= 55:
-            # Ghi log match (tích lũy lịch sử)
             log = MatchLog(
                 user_id=user_id,
                 target_id=target.id,
@@ -221,171 +254,3 @@ def dang_ky_ho_so(request: Request, user: UserRegister, db=Depends(get_db)):
         "status": "Hồ sơ đã được ghi nhận bảo mật thành công",
         "ma_ho_so": user_id,
         "so_luong_trung_khop_uoc_tinh": len(ket_qua),
-        "goi_y_phah_he": ket_qua[:15],
-        "huong_dan": (
-            "Hãy lưu MÃ HỒ SƠ để tra cứu sau. "
-            "Hệ thống bảo mật số điện thoại đối phương. "
-            "Admin sẽ liên hệ khi có kết quả được duyệt."
-        ),
-        "encryption_enabled": is_encryption_enabled(),
-        "copyright": settings.COPYRIGHT,
-    }
-
-
-@app.get("/api/tra-cuu/{ma_ho_so}")
-@limiter.limit("20/minute")
-def tra_cuu(request: Request, ma_ho_so: str, db=Depends(get_db)):
-    user = db.query(UserDB).filter(UserDB.id == ma_ho_so).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Không tìm thấy hồ sơ")
-    return {
-        "ma_ho_so": user.id,
-        "ho_ten": user.ho_ten,
-        "loai_tim_kiem": user.loai_tim_kiem,
-        "status": user.status,
-        "created_at": user.created_at.isoformat() if user.created_at else None,
-        "thong_bao": (
-            "Hồ sơ đang được bảo mật. "
-            "Khi có kết quả duyệt, Admin sẽ liên hệ qua SĐT/Email bạn đã cung cấp."
-        ),
-    }
-
-
-# ---------- ADMIN ----------
-@app.get("/api/admin/danh-sach/")
-def admin_list(
-    api_key: str = Depends(verify_admin),
-    db=Depends(get_db),
-    status: Optional[str] = None,
-    limit: int = 200,
-):
-    q = db.query(UserDB).order_by(UserDB.created_at.desc())
-    if status:
-        q = q.filter(UserDB.status == status)
-    users = q.limit(min(limit, 500)).all()
-    result = []
-    for u in users:
-        result.append({
-            "id": u.id,
-            "ho_ten": u.ho_ten,
-            "loai_tim_kiem": u.loai_tim_kiem,
-            "so_dien_thoai": decrypt_field(u.so_dien_thoai_enc),
-            "email": decrypt_field(u.email_enc),
-            "dia_chi_hien_tai": u.dia_chi_hien_tai,
-            "dia_chi_truoc_day": u.dia_chi_truoc_day,
-            "vi_tri_that_lac": u.vi_tri_that_lac,
-            "nam_that_lac": u.nam_that_lac,
-            "status": u.status,
-            "notes": u.notes,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        })
-    return {
-        "tong_so": len(result),
-        "encryption_enabled": is_encryption_enabled(),
-        "danh_sach": result,
-    }
-
-
-@app.patch("/api/admin/ho-so/{user_id}/status")
-def admin_update_status(
-    user_id: str,
-    body: StatusUpdate,
-    api_key: str = Depends(verify_admin),
-    db=Depends(get_db),
-):
-    user = db.query(UserDB).filter(UserDB.id == user_id).first()
-    if not user:
-        raise HTTPException(404, "Không tìm thấy hồ sơ")
-    user.status = body.status
-    if body.notes is not None:
-        user.notes = body.notes
-    user.updated_at = datetime.utcnow()
-    db.commit()
-    return {"status": "ok", "id": user_id, "new_status": body.status}
-
-
-@app.get("/api/admin/matches/")
-def admin_matches(api_key: str = Depends(verify_admin), db=Depends(get_db), limit: int = 100):
-    logs = db.query(MatchLog).order_by(MatchLog.created_at.desc()).limit(limit).all()
-    return {
-        "tong_so": len(logs),
-        "matches": [
-            {
-                "id": m.id,
-                "user_id": m.user_id,
-                "target_id": m.target_id,
-                "loai_quan_he": m.loai_quan_he,
-                "diem_tin_cay": m.diem_tin_cay,
-                "ly_do": json.loads(m.ly_do) if m.ly_do else [],
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-                "is_notified": m.is_notified,
-            }
-            for m in logs
-        ],
-    }
-
-
-@app.get("/api/admin/backup/")
-def admin_backup(api_key: str = Depends(verify_admin), db=Depends(get_db)):
-    """
-    Xuất toàn bộ dữ liệu ADN (dạng JSON) để backup.
-    Giữ file này an toàn – đây là bản sao dữ liệu quan trọng.
-    """
-    users = db.query(UserDB).all()
-    data = []
-    for u in users:
-        data.append({
-            "id": u.id,
-            "ho_ten": u.ho_ten,
-            "loai_tim_kiem": u.loai_tim_kiem,
-            "so_dien_thoai": decrypt_field(u.so_dien_thoai_enc),
-            "email": decrypt_field(u.email_enc),
-            "dia_chi_hien_tai": u.dia_chi_hien_tai,
-            "dia_chi_truoc_day": u.dia_chi_truoc_day,
-            "vi_tri_that_lac": u.vi_tri_that_lac,
-            "nam_that_lac": u.nam_that_lac,
-            "dna_data": json.loads(u.dna_data),
-            "status": u.status,
-            "notes": u.notes,
-            "created_at": u.created_at.isoformat() if u.created_at else None,
-        })
-    return {
-        "version": settings.VERSION,
-        "exported_at": datetime.utcnow().isoformat(),
-        "total": len(data),
-        "users": data,
-    }
-
-
-@app.get("/api/admin/stats/")
-def admin_stats(api_key: str = Depends(verify_admin), db=Depends(get_db)):
-    total = db.query(UserDB).count()
-    pending = db.query(UserDB).filter(UserDB.status == "pending").count()
-    matched = db.query(UserDB).filter(UserDB.status == "matched").count()
-    matches = db.query(MatchLog).count()
-    return {
-        "total_ho_so": total,
-        "pending": pending,
-        "matched": matched,
-        "total_matches_logged": matches,
-        "encryption_enabled": is_encryption_enabled(),
-        "database": "PostgreSQL" if settings.is_postgres else "SQLite",
-        "version": settings.VERSION,
-    }
-
-
-@app.get("/health")
-def health():
-    return {
-        "status": "ok",
-        "version": settings.VERSION,
-        "database": "PostgreSQL" if settings.is_postgres else "SQLite",
-        "encryption": is_encryption_enabled(),
-        "features": [
-            "DNA + location multi-criteria matching",
-            "Encrypted phone/email",
-            "Match history log",
-            "Admin backup & status management",
-            "Alembic-ready for zero-data-loss upgrades",
-        ],
-    }
