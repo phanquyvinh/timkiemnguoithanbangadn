@@ -1,30 +1,33 @@
 """
 Bảo mật dữ liệu nhạy cảm (SĐT, Email).
-ADN được lưu dạng JSON nhưng chỉ Admin mới xem được chi tiết.
+Đọc ENCRYPTION_KEY trực tiếp từ môi trường mỗi lần (tránh lỗi cache / import sớm).
 """
+import os
 from cryptography.fernet import Fernet, InvalidToken
-from config import get_settings
 
-_settings = get_settings()
-_fernet: Fernet | None = None
+_fernet = None
+_fernet_loaded = False
 
 
-def _get_fernet() -> Fernet | None:
-    global _fernet
-    if _fernet is not None:
+def _get_fernet():
+    global _fernet, _fernet_loaded
+    if _fernet_loaded:
         return _fernet
-    key = _settings.ENCRYPTION_KEY
+
+    _fernet_loaded = True
+    key = (os.getenv("ENCRYPTION_KEY") or "").strip().strip('"').strip("'")
     if not key:
+        _fernet = None
         return None
     try:
-        _fernet = Fernet(key.encode() if isinstance(key, str) else key)
+        _fernet = Fernet(key.encode("utf-8"))
         return _fernet
     except Exception:
+        _fernet = None
         return None
 
 
 def encrypt_field(plain: str) -> str:
-    """Mã hóa chuỗi. Nếu chưa có ENCRYPTION_KEY thì trả về plain (dev mode)."""
     f = _get_fernet()
     if f is None:
         return plain
@@ -32,14 +35,13 @@ def encrypt_field(plain: str) -> str:
 
 
 def decrypt_field(token: str) -> str:
-    """Giải mã. Nếu không phải ciphertext hoặc lỗi → trả nguyên bản."""
     f = _get_fernet()
     if f is None:
         return token
     try:
         return f.decrypt(token.encode("utf-8")).decode("utf-8")
     except (InvalidToken, Exception):
-        return token  # dữ liệu cũ chưa mã hóa vẫn đọc được
+        return token
 
 
 def is_encryption_enabled() -> bool:
