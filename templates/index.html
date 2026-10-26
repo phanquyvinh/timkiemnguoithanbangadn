@@ -133,27 +133,6 @@
                 <input type="text" id="lookupId" placeholder="Dán mã hồ sơ UUID vào đây">
                 <button type="button" class="btn-secondary" id="btnLookup">Tra cứu</button>
             </div>
-            <div id="lookupResult" class="result-box" hidden style="margin-top:16px;"></div>
-        </section>
-
-        <section class="card how-it-works">
-            <h2>Vì sao dữ liệu không bị mất khi nâng cấp?</h2>
-            <div class="steps">
-                <div class="step-item">
-                    <div class="step-num">01</div>
-                    <h3>PostgreSQL bền vững</h3>
-                    <p>Dữ liệu ADN nằm trên database riêng, không phụ thuộc code. Redeploy hay nâng cấp code đều không đụng đến dữ liệu.</p>
-                </div>
-                <div class="step-item">
-                    <div class="step-num">02</div>
-                    <h3>Alembic migration</h3>
-                    <p>Khi thêm cột mới, hệ thống chỉ ALTER TABLE, không bao giờ DROP. Mọi hồ sơ cũ vẫn còn nguyên.</p>
-                </div>
-                <div class="step-item">
-                    <div class="step-num">03</div>
-                    <h3>Backup định kỳ</h3>
-                    <p>Admin có thể xuất toàn bộ database ra JSON bất cứ lúc nào để lưu trữ ngoài.</p>
-                </div>
             </div>
         </section>
     </main>
